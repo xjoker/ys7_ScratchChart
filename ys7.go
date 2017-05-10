@@ -13,6 +13,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -29,36 +30,54 @@ import (
 )
 
 func getToken(key, sec string) (string, int64) {
-	req, _ := http.NewRequest("POST", "https://open.ys7.com/api/lapp/token/get", strings.NewReader("appKey="+key+"&appSecret="+sec))
+	req, err := http.NewRequest("POST", "https://open.ys7.com/api/lapp/token/get", strings.NewReader("appKey="+key+"&appSecret="+sec))
+	if err != nil {
+		log.Fatal(err)
+	}
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer resp.Body.Close()
 
-	body, _ := ioutil.ReadAll(resp.Body)
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
 	fmt.Println(string(body))
-	json, _ := simplejson.NewJson(body)
+	json, err := simplejson.NewJson(body)
+	if err != nil {
+		log.Fatal(err)
+	}
 	token := json.Get("data").Get("accessToken").MustString()
 	expireTime := json.Get("data").Get("expireTime").MustInt64()
-	//i, _ := strconv.ParseInt(expireTime, 10, 64)
 	return token, expireTime
 }
 
-func getImg(token string, sn int) string {
-	req, _ := http.NewRequest("POST",
+func getImg(token string, sn int) (img string, err error) {
+	req, err := http.NewRequest("POST",
 		"https://open.ys7.com/api/lapp/device/capture",
 		strings.NewReader("accessToken="+token+"&deviceSerial="+strconv.Itoa(sn)+"&channelNo=1"))
-
+	if err != nil {
+	}
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+	}
 	defer resp.Body.Close()
 
 	body, _ := ioutil.ReadAll(resp.Body)
 	json, _ := simplejson.NewJson(body)
-	img := json.Get("data").Get("picUrl").MustString()
-	return img
-
+	code := json.Get("code").MustString()
+	if code == "200" {
+		img = json.Get("data").Get("picUrl").MustString()
+	} else {
+		err = errors.New(code)
+	}
+	return img, err
 }
 
 func PathExist(_path string) bool {
@@ -128,24 +147,28 @@ func main() {
 			fmt.Println("获取Token")
 		}
 
-		imgURL := getImg(token, deviceSerial)
+		imgURL, err := getImg(token, deviceSerial)
+		if err != nil {
+			fmt.Println(time.Now().String()+"图片抓取失败，可能因为设备关机或无法链接。 Code:", err)
+		} else {
+			res, _ := http.Get(imgURL)
+			if PathExist(savePath) {
+				os.Remove(savePath)
+			}
+			file, _ := os.Create(savePath)
+			defer file.Close()
+			io.Copy(file, res.Body)
+			file.Close()
 
-		res, _ := http.Get(imgURL)
-		if PathExist(savePath) {
-			os.Remove(savePath)
+			if !isFile(imgPath) {
+				os.MkdirAll(imgPath, 0777)
+			}
+
+			CopyFile(imgPath+"/"+time.Now().Format("2006-01-02 15-04-05")+".jpg", savePath)
+
+			fmt.Println(time.Now().String() + "抓取结束")
 		}
-		file, _ := os.Create(savePath)
-		defer file.Close()
-		io.Copy(file, res.Body)
-		file.Close()
 
-		if !isFile(imgPath) {
-			os.MkdirAll(imgPath, 0777)
-		}
-
-		CopyFile(imgPath+"/"+time.Now().Format("2006-01-02 15-04-05")+".jpg", savePath)
-
-		fmt.Println(time.Now().String() + "抓取结束")
 	}
 
 }
